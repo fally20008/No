@@ -1,8 +1,8 @@
-const a = require("axios");
-const f = require("fs");
-const p = require("path");
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 
-const u = "http://65.109.80.126:20409/aryan/colorize";
+const API_URL = "http://65.109.80.126:20409/aryan/colorize";
 
 module.exports = {
   config: {
@@ -12,10 +12,10 @@ module.exports = {
     role: 0,
     author: "Christus",
     countDown: 10,
-    longDescription: "Colorize black and white images.",
+    longDescription: "Colorise les images en noir et blanc.",
     category: "image",
     guide: {
-      en: "${pn} reply to a black and white image to colorize it."
+      fr: "{pn} — Répond à une image en noir et blanc pour la coloriser."
     }
   },
 
@@ -26,60 +26,63 @@ module.exports = {
       !event.messageReply.attachments[0] ||
       event.messageReply.attachments[0].type !== "photo"
     ) {
-      return message.reply("🎨 Please reply to a black and white image to colorize it.");
+      return message.reply("🎨 Veuillez répondre à une image en noir et blanc pour la coloriser.");
     }
 
-    const i = event.messageReply.attachments[0].url;
-    const t = p.join(__dirname, "cache", `colorized_${Date.now()}.jpg`);
-    let m;
+    const imageUrl = event.messageReply.attachments[0].url;
+    const tempPath = path.join(__dirname, "cache", `colorized_${Date.now()}.jpg`);
+    let waitMessageID;
 
     try {
-      const r = await message.reply("🔄 Colorizing your image, please wait...");
-      m = r.messageID;
+      const waitMsg = await message.reply("🔄 Colorisation en cours... Patientez un instant !");
+      waitMessageID = waitMsg.messageID;
 
-      const d = await a.get(`${u}?imageUrl=${encodeURIComponent(i)}`);
-      
-      const colorizedImageUrl = d.data.result;
+      // Appel à l'API de colorisation
+      const response = await axios.get(`${API_URL}?imageUrl=${encodeURIComponent(imageUrl)}`);
+      const colorizedImageUrl = response.data.result;
 
       if (!colorizedImageUrl) {
-          throw new Error(d.data.error || "Colorize API did not return an image URL.");
+        throw new Error(response.data.error || "L'API n'a pas renvoyé d'URL d'image.");
       }
-      
-      const x = await a.get(colorizedImageUrl, { responseType: "stream" });
-      const w = f.createWriteStream(t);
-      x.data.pipe(w);
 
-      await new Promise((res, rej) => {
-        w.on("finish", res);
-        w.on("error", rej);
+      // Téléchargement de l'image colorisée
+      const imgStream = await axios.get(colorizedImageUrl, { responseType: "stream" });
+      const writer = fs.createWriteStream(tempPath);
+      imgStream.data.pipe(writer);
+
+      await new Promise((resolve, reject) => {
+        writer.on("finish", resolve);
+        writer.on("error", reject);
       });
 
+      // Envoi de l'image colorisée
       await message.reply({
-        body: "✅ Your colorized image is ready!",
-        attachment: f.createReadStream(t),
+        body: "✅ Voici votre image colorisée ! 🎨",
+        attachment: fs.createReadStream(tempPath),
       });
 
     } catch (e) {
-      console.error("Colorize Error:", e);
-      let errorMessage = "❌ An error occurred while colorizing the image. Please try again later.";
-      if (e.response && e.response.data && e.response.data.error) {
-          errorMessage = `❌ Colorization API Error: ${e.response.data.error}`;
-          if (e.response.data.details) {
-               let details = e.response.data.details;
-               if (typeof details === 'object' && details !== null) {
-                   details = details.message || JSON.stringify(details);
-               }
-               errorMessage += `\nDetails: ${details}`;
+      console.error("Erreur Colorize :", e);
+      let errorMessage = "❌ Une erreur est survenue lors de la colorisation. Réessayez plus tard.";
+
+      if (e.response?.data?.error) {
+        errorMessage = `❌ Erreur API Colorize : ${e.response.data.error}`;
+        if (e.response.data.details) {
+          let details = e.response.data.details;
+          if (typeof details === 'object' && details !== null) {
+            details = details.message || JSON.stringify(details);
           }
+          errorMessage += `\nDétails : ${details}`;
+        }
       } else if (e.message) {
-          errorMessage = `❌ Processing Error: ${e.message}`;
+        errorMessage = `❌ Erreur de traitement : ${e.message}`;
       }
-      
+
       message.reply(errorMessage);
 
     } finally {
-      if (m) message.unsend(m);
-      if (f.existsSync(t)) f.unlinkSync(t);
+      if (waitMessageID) message.unsend(waitMessageID);
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     }
   }
 };
